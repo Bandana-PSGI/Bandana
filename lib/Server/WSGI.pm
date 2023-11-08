@@ -2,8 +2,17 @@ package Server::WSGI;
 
 use strict;
 use warnings;
-use Socket qw/ AF_INET SOCK_STREAM pack_sockaddr_in inet_aton /;
+use Socket qw/
+    AF_INET
+    SOCK_STREAM
+    TCP_CORK
+    SOL_SOCKET
+    SO_RCVBUF
+    pack_sockaddr_in
+    inet_aton
+/;
 use HTTP::Request;
+use List::Util qw/ sum /;
 
 use Data::Dumper;
 
@@ -24,7 +33,7 @@ sub new {
 
     bind( $self->{server_socket}, pack_sockaddr_in( $self->{port}, inet_aton( $self->{host} ) ) ) or die "Bind: $!";
 
-    listen( $self->{server_socket}, 1 );
+    listen( $self->{server_socket}, 1000 ) or die "Listen: $!";
 
     return bless $self, $class;
 }
@@ -37,9 +46,9 @@ sub run {
     while ( TRUE ) {
         accept( my $conn, $self->{server_socket} ) or die "Accept: $!";
 
-        my $request = '';
+        my $chunk_size = sum( unpack( "C*", $conn ) );
 
-        recv( $conn, $request, 1024, 0 );
+        recv( $conn, my $request, $chunk_size, 0 );
 
         $request = $self->parse_http( $request );
 
@@ -48,9 +57,9 @@ sub run {
         my $response = $self->{application}->( \&Server::WSGI::start_response, $environ );
 
         for my $data ( @$response ) {
-            print $conn $data;
+            send( $conn, $data, TCP_CORK );
         }
-        
+
         close( $conn );
     }
 }
