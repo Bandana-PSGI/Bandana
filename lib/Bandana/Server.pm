@@ -1,20 +1,20 @@
-package Server::WSGI;
+package Bandana::Server;
 
 use strict;
 use warnings;
+
 use Socket qw/
     AF_INET
     SOCK_STREAM
     TCP_CORK
     SOL_SOCKET
     SO_RCVBUF
+    SO_REUSEADDR
     pack_sockaddr_in
     inet_aton
 /;
 use HTTP::Request;
 use List::Util qw/ sum /;
-
-use Data::Dumper;
 
 use constant {
     TRUE  => 1,
@@ -22,24 +22,26 @@ use constant {
 };
 
 sub new {
-    my ( $class, $port, $host ) = @_;
+    my ( $class, $host, $port ) = @_;
 
     my $self = {
-        host => $host || 'localhost',
-        port => $port || 8001,
+        host => $host,
+        port => $port,
     };
 
     socket( $self->{server_socket}, AF_INET, SOCK_STREAM, 0 ) or die "Socket: $!";
 
+    setsockopt( $self->{server_socket}, SOL_SOCKET, SO_REUSEADDR, 1 );
+
     bind( $self->{server_socket}, pack_sockaddr_in( $self->{port}, inet_aton( $self->{host} ) ) ) or die "Bind: $!";
 
-    listen( $self->{server_socket}, 1000 ) or die "Listen: $!";
+    listen( $self->{server_socket}, 2048 ) or die "Listen: $!";
 
     return bless $self, $class;
 }
 
 sub run {
-    my ( $self ) = @_;
+    my ( $self, $app ) = @_;
 
     print( "Running server on $self->{host} : $self->{port} \n" );
 
@@ -54,10 +56,31 @@ sub run {
 
         my $environ = $self->to_environ( $request );
 
-        my $response = $self->{application}->( \&Server::WSGI::start_response, $environ );
+        my $response = &{ $app }( $environ );
 
-        for my $data ( @$response ) {
-            send( $conn, $data, TCP_CORK );
+        my $status = shift @$response;
+        $status    = "HTTP/1.1 $status OK\r\n";
+
+        print "\n$status\n";
+
+        send( $conn, $status, 0 );
+
+        my %headers = @{ shift @$response };
+
+        while ( my ( $key, $value ) = each %headers ) {
+            print "$key: $value\n";
+            send( $conn, "$key: $value\r\n", 0 );
+        }
+
+        send( $conn, "\r\n", 0 );
+
+        print "\n";
+
+        my $body = shift @$response;
+
+        for my $element ( @$body ) {
+            print "$element\n";
+            send( $conn, $element, 0 );
         }
 
         close( $conn );
@@ -73,20 +96,6 @@ sub to_environ {
         SERVER_POTOCOL => $request->protocol,
         'wsgi.input'   => $request->content,
     };
-}
-
-sub start_response {
-    my ( $status, $headers ) = @_;
-
-    $status = "HTTP/1.1 $status\r\n";
-
-    my $headers_line = '';
-
-    while ( my ( $key, $value ) = each %$headers ) {
-        $headers_line .= $key . ': ' . $value . "\r\n";
-    }
-
-    return $status . $headers_line . "\r\n";
 }
 
 sub parse_http {
