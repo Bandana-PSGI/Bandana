@@ -26,7 +26,7 @@ C<bandana.pl> runs any valid PSGI applications
 
 =head1 AUTHORS
 
-backslash001 <telegin.vlad132@gmail.com>
+backslash001 <troth@cpan.org>
 
 =head1 COPYRIGHT
 
